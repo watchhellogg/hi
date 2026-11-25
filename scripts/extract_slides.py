@@ -70,6 +70,40 @@ def fmt_ts(sec: float) -> str:
     return f"{h}h{m:02d}m{s:02d}s" if h else f"{m:02d}m{s:02d}s"
 
 
+def extract(video: Path, outdir: Path, interval: float = 2.0, min_change: float = 0.2,
+            crop: tuple[float, float, float, float] | None = None, width: int = 1600) -> tuple[list[tuple[Path, float]], int]:
+    """動画からスライドを抽出して outdir に保存。[(画像パス, 秒)] とフレーム総数を返す。"""
+    outdir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(video),
+            "-vf", f"fps=1/{interval},scale={width}:-2",
+            "-q:v", "3", str(Path(tmp) / "f_%06d.jpg"),
+        ]
+        subprocess.run(cmd, check=True)
+        frames = sorted(Path(tmp).glob("f_*.jpg"))
+        kept: list[tuple[Path, float]] = []
+        last: Image.Image | None = None
+        for i, f in enumerate(frames):
+            with Image.open(f) as im:
+                t = thumb(crop_frac(im, crop))
+            if last is None or changed_pct(t, last) > min_change:
+                ts = i * interval
+                name = f"slide_{len(kept) + 1:03d}_{fmt_ts(ts)}.jpg"
+                shutil.copy(f, outdir / name)
+                kept.append((outdir / name, ts))
+                last = t
+    return kept, len(frames)
+
+
+def write_index(video: Path, outdir: Path, kept: list[tuple[Path, float]], cond: str) -> None:
+    lines = ["---", "type: slide-index", f"source_video: \"{video.name}\"", f"slides: {len(kept)}", "---",
+             f"# {video.stem} スライド一覧", "", f"抽出条件: {cond}", ""]
+    for p, ts in kept:
+        lines += [f"## {p.stem.split('_')[1]} — {fmt_ts(ts)}", f"![[{p.name}]]", ""]
+    (outdir / "index.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video", type=Path)
@@ -89,49 +123,10 @@ def main() -> int:
         print(f"動画がありません: {args.video}", file=sys.stderr)
         return 1
     crop = tuple(float(v) for v in args.crop.split(",")) if args.crop else None
-    args.outdir.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(args.video),
-            "-vf", f"fps=1/{args.interval},scale={args.width}:-2",
-            "-q:v", "3", str(Path(tmp) / "f_%06d.jpg"),
-        ]
-        subprocess.run(cmd, check=True)
-        frames = sorted(Path(tmp).glob("f_*.jpg"))
-        if not frames:
-            print("フレームを取り出せませんでした。", file=sys.stderr)
-            return 1
-
-        kept: list[tuple[Path, float]] = []
-        last: Image.Image | None = None
-        for i, f in enumerate(frames):
-            with Image.open(f) as im:
-                t = thumb(crop_frac(im, crop))
-            if last is None or changed_pct(t, last) > args.min_change:
-                ts = i * args.interval
-                name = f"slide_{len(kept) + 1:03d}_{fmt_ts(ts)}.jpg"
-                shutil.copy(f, args.outdir / name)
-                kept.append((args.outdir / name, ts))
-                last = t
-
-    stem = args.video.stem
-    lines = [
-        "---",
-        "type: slide-index",
-        f"source_video: \"{args.video.name}\"",
-        f"slides: {len(kept)}",
-        "---",
-        f"# {stem} スライド一覧",
-        "",
-        f"抽出条件: interval={args.interval}s / min-change={args.min_change}%" + (f" / crop={args.crop}" if args.crop else ""),
-        "",
-    ]
-    for p, ts in kept:
-        lines += [f"## {p.stem.split('_')[1]} — {fmt_ts(ts)}", f"![[{p.name}]]", ""]
-    (args.outdir / "index.md").write_text("\n".join(lines), encoding="utf-8")
-
-    print(f"{len(frames)} フレーム中 {len(kept)} 枚をスライドとして保存 → {args.outdir}")
+    kept, n_frames = extract(args.video, args.outdir, args.interval, args.min_change, crop, args.width)
+    write_index(args.video, args.outdir, kept,
+                f"interval={args.interval}s / min-change={args.min_change}%" + (f" / crop={args.crop}" if args.crop else ""))
+    print(f"{n_frames} フレーム中 {len(kept)} 枚をスライドとして保存 → {args.outdir}")
     return 0
 
 

@@ -30,6 +30,20 @@ def ts(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+def transcribe_segments(video: Path, model_name: str = "medium", device: str = "auto") -> list[tuple[float, float, str]]:
+    """[(開始秒, 終了秒, テキスト)] を返す。faster-whisper が無ければ ImportError。"""
+    from faster_whisper import WhisperModel
+
+    model = WhisperModel(model_name, device=device, compute_type="auto")
+    segments, _ = model.transcribe(str(video), language="ja", initial_prompt=NEURO_PROMPT,
+                                   vad_filter=True, beam_size=5)
+    out = []
+    for seg in segments:
+        out.append((seg.start, seg.end, seg.text.strip()))
+        print(f"[{ts(seg.start)}] {seg.text.strip()}", flush=True)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video", type=Path)

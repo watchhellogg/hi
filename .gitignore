@@ -1,0 +1,16 @@
+# 学会の動画・スライド画像は著作物かつ患者画像を含みうるため、リポジトリには入れない
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.heif
+out/
+vault/99_Attachments/
+vault/.obsidian/workspace*.json
+__pycache__/
+.DS_Store
